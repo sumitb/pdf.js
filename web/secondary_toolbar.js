@@ -101,7 +101,9 @@ var SecondaryToolbar = {
   },
 
   lastPageClick: function secondaryToolbarLastPageClick(evt) {
-    PDFView.page = PDFView.pdfDocument.numPages;
+    if (PDFView.pdfDocument) {
+      PDFView.page = PDFView.pdfDocument.numPages;
+    }
     this.close();
   },
 
@@ -114,7 +116,7 @@ var SecondaryToolbar = {
   },
 
   documentPropertiesClick: function secondaryToolbarDocumentPropsClick(evt) {
-    this.documentProperties.show();
+    this.documentProperties.open();
     this.close();
   },
 

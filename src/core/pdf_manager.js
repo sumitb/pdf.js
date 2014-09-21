@@ -15,9 +15,12 @@
  * limitations under the License.
  */
 /* globals NotImplementedException, MissingDataException, Promise, Stream,
-           PDFDocument, ChunkedStreamManager, LegacyPromise */
+           PDFDocument, ChunkedStreamManager, createPromiseCapability */
 
 'use strict';
+
+// The maximum number of bytes fetched per range request
+var RANGE_CHUNK_SIZE = 65536;
 
 // TODO(mack): Make use of PDFJS.Util.inherit() when it becomes available
 var BasePdfManager = (function BasePdfManagerClosure() {
@@ -30,24 +33,24 @@ var BasePdfManager = (function BasePdfManagerClosure() {
       throw new NotImplementedException();
     },
 
-    ensureModel: function BasePdfManager_ensureModel(prop, args) {
-      return this.ensure(this.pdfModel, prop, args);
+    ensureDoc: function BasePdfManager_ensureDoc(prop, args) {
+      return this.ensure(this.pdfDocument, prop, args);
     },
 
     ensureXRef: function BasePdfManager_ensureXRef(prop, args) {
-      return this.ensure(this.pdfModel.xref, prop, args);
+      return this.ensure(this.pdfDocument.xref, prop, args);
     },
 
     ensureCatalog: function BasePdfManager_ensureCatalog(prop, args) {
-      return this.ensure(this.pdfModel.catalog, prop, args);
+      return this.ensure(this.pdfDocument.catalog, prop, args);
     },
 
     getPage: function BasePdfManager_pagePage(pageIndex) {
-      return this.pdfModel.getPage(pageIndex);
+      return this.pdfDocument.getPage(pageIndex);
     },
 
     cleanup: function BasePdfManager_cleanup() {
-      return this.pdfModel.cleanup();
+      return this.pdfDocument.cleanup();
     },
 
     ensure: function BasePdfManager_ensure(obj, prop, args) {
@@ -63,10 +66,15 @@ var BasePdfManager = (function BasePdfManagerClosure() {
     },
 
     updatePassword: function BasePdfManager_updatePassword(password) {
-      this.pdfModel.xref.password = this.password = password;
-      if (this.passwordChangedPromise) {
-        this.passwordChangedPromise.resolve();
+      this.pdfDocument.xref.password = this.password = password;
+      if (this._passwordChangedCapability) {
+        this._passwordChangedCapability.resolve();
       }
+    },
+
+    passwordChanged: function BasePdfManager_passwordChanged() {
+      this._passwordChangedCapability = createPromiseCapability();
+      return this._passwordChangedCapability.promise;
     },
 
     terminate: function BasePdfManager_terminate() {
@@ -80,9 +88,9 @@ var BasePdfManager = (function BasePdfManagerClosure() {
 var LocalPdfManager = (function LocalPdfManagerClosure() {
   function LocalPdfManager(data, password) {
     var stream = new Stream(data);
-    this.pdfModel = new PDFDocument(this, stream, password);
-    this.loadedStream = new LegacyPromise();
-    this.loadedStream.resolve(stream);
+    this.pdfDocument = new PDFDocument(this, stream, password);
+    this._loadedStreamCapability = createPromiseCapability();
+    this._loadedStreamCapability.resolve(stream);
   }
 
   LocalPdfManager.prototype = Object.create(BasePdfManager.prototype);
@@ -90,28 +98,25 @@ var LocalPdfManager = (function LocalPdfManagerClosure() {
 
   LocalPdfManager.prototype.ensure =
       function LocalPdfManager_ensure(obj, prop, args) {
-    var promise = new LegacyPromise();
-    try {
-      var value = obj[prop];
-      var result;
-      if (typeof(value) === 'function') {
-        result = value.apply(obj, args);
-      } else {
-        result = value;
+    return new Promise(function (resolve, reject) {
+      try {
+        var value = obj[prop];
+        var result;
+        if (typeof value === 'function') {
+          result = value.apply(obj, args);
+        } else {
+          result = value;
+        }
+        resolve(result);
+      } catch (e) {
+        reject(e);
       }
-      promise.resolve(result);
-    } catch (e) {
-      console.log(e.stack);
-      promise.reject(e);
-    }
-    return promise;
+    });
   };
 
   LocalPdfManager.prototype.requestRange =
       function LocalPdfManager_requestRange(begin, end) {
-    var promise = new LegacyPromise();
-    promise.resolve();
-    return promise;
+    return Promise.resolve();
   };
 
   LocalPdfManager.prototype.requestLoadedStream =
@@ -120,7 +125,7 @@ var LocalPdfManager = (function LocalPdfManagerClosure() {
 
   LocalPdfManager.prototype.onLoadedStream =
       function LocalPdfManager_getLoadedStream() {
-    return this.loadedStream;
+    return this._loadedStreamCapability.promise;
   };
 
   LocalPdfManager.prototype.terminate =
@@ -132,9 +137,6 @@ var LocalPdfManager = (function LocalPdfManagerClosure() {
 })();
 
 var NetworkPdfManager = (function NetworkPdfManagerClosure() {
-
-  var CHUNK_SIZE = 65536;
-
   function NetworkPdfManager(args, msgHandler) {
 
     this.msgHandler = msgHandler;
@@ -147,10 +149,10 @@ var NetworkPdfManager = (function NetworkPdfManagerClosure() {
       disableAutoFetch: args.disableAutoFetch,
       initialData: args.initialData
     };
-    this.streamManager = new ChunkedStreamManager(args.length, CHUNK_SIZE,
+    this.streamManager = new ChunkedStreamManager(args.length, RANGE_CHUNK_SIZE,
                                                   args.url, params);
 
-    this.pdfModel = new PDFDocument(this, this.streamManager.getStream(),
+    this.pdfDocument = new PDFDocument(this, this.streamManager.getStream(),
                                     args.password);
   }
 
@@ -159,42 +161,39 @@ var NetworkPdfManager = (function NetworkPdfManagerClosure() {
 
   NetworkPdfManager.prototype.ensure =
       function NetworkPdfManager_ensure(obj, prop, args) {
-    var promise = new LegacyPromise();
-    this.ensureHelper(promise, obj, prop, args);
-    return promise;
-  };
+    var pdfManager = this;
 
-  NetworkPdfManager.prototype.ensureHelper =
-      function NetworkPdfManager_ensureHelper(promise, obj, prop, args) {
-    try {
-      var result;
-      var value = obj[prop];
-      if (typeof(value) === 'function') {
-        result = value.apply(obj, args);
-      } else {
-        result = value;
-      }
-      promise.resolve(result);
-    } catch(e) {
-      if (!(e instanceof MissingDataException)) {
-        console.log(e.stack);
-        promise.reject(e);
-        return;
+    return new Promise(function (resolve, reject) {
+      function ensureHelper() {
+        try {
+          var result;
+          var value = obj[prop];
+          if (typeof value === 'function') {
+            result = value.apply(obj, args);
+          } else {
+            result = value;
+          }
+          resolve(result);
+        } catch(e) {
+          if (!(e instanceof MissingDataException)) {
+            reject(e);
+            return;
+          }
+          pdfManager.streamManager.requestRange(e.begin, e.end, ensureHelper);
+        }
       }
 
-      this.streamManager.requestRange(e.begin, e.end, function() {
-        this.ensureHelper(promise, obj, prop, args);
-      }.bind(this));
-    }
+      ensureHelper();
+    });
   };
 
   NetworkPdfManager.prototype.requestRange =
       function NetworkPdfManager_requestRange(begin, end) {
-    var promise = new LegacyPromise();
-    this.streamManager.requestRange(begin, end, function() {
-      promise.resolve();
-    });
-    return promise;
+    return new Promise(function (resolve) {
+      this.streamManager.requestRange(begin, end, function() {
+        resolve();
+      });
+    }.bind(this));
   };
 
   NetworkPdfManager.prototype.requestLoadedStream =

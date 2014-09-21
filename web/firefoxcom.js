@@ -52,8 +52,8 @@ var FirefoxCom = (function FirefoxComClosure() {
       var request = document.createTextNode('');
       if (callback) {
         document.addEventListener('pdf.js.response', function listener(event) {
-          var node = event.target,
-              response = event.detail.response;
+          var node = event.target;
+          var response = event.detail.response;
 
           document.documentElement.removeChild(node);
 
@@ -64,9 +64,12 @@ var FirefoxCom = (function FirefoxComClosure() {
       document.documentElement.appendChild(request);
 
       var sender = document.createEvent('CustomEvent');
-      sender.initCustomEvent('pdf.js.message', true, false,
-                             {action: action, data: data, sync: false,
-                              callback: callback});
+      sender.initCustomEvent('pdf.js.message', true, false, {
+        action: action,
+        data: data,
+        sync: false,
+        responseExpected: !!callback
+      });
       return request.dispatchEvent(sender);
     }
   };
@@ -80,6 +83,18 @@ var DownloadManager = (function DownloadManagerClosure() {
       FirefoxCom.request('download', {
         originalUrl: url,
         filename: filename
+      });
+    },
+
+    downloadData: function DownloadManager_downloadData(data, filename,
+                                                        contentType) {
+      var blobUrl = PDFJS.createObjectURL(data, contentType);
+      
+      FirefoxCom.request('download', {
+        blobUrl: blobUrl,
+        originalUrl: blobUrl,
+        filename: filename,
+        isAttachment: true
       });
     },
 
@@ -104,14 +119,17 @@ var DownloadManager = (function DownloadManagerClosure() {
   return DownloadManager;
 })();
 
-Preferences.prototype.writeToStorage = function(prefObj) {
-  FirefoxCom.requestSync('setPreferences', prefObj);
+Preferences._writeToStorage = function (prefObj) {
+  return new Promise(function (resolve) {
+    FirefoxCom.request('setPreferences', prefObj, resolve);
+  });
 };
 
-Preferences.prototype.readFromStorage = function() {
-  var readFromStoragePromise = new Promise(function (resolve) {
-    var readPrefs = JSON.parse(FirefoxCom.requestSync('getPreferences'));
-    resolve(readPrefs);
+Preferences._readFromStorage = function (prefObj) {
+  return new Promise(function (resolve) {
+    FirefoxCom.request('getPreferences', prefObj, function (prefStr) {
+      var readPrefs = JSON.parse(prefStr);
+      resolve(readPrefs);
+    });
   });
-  return readFromStoragePromise;
 };

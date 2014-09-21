@@ -6,16 +6,6 @@
 'use strict';
 
 describe('font', function() {
-  function hexDump(bytes) {
-    var line = '';
-    for (var i = 0, ii = bytes.length; i < ii; ++i) {
-      var b = bytes[i].toString(16);
-      if (b.length < 2)
-        b = '0' + b;
-      line += b.toString(16);
-    }
-    return line;
-  }
   // This example font comes from the CFF spec:
   // http://www.adobe.com/content/dam/Adobe/en/devnet/font/pdfs/5176.CFF.pdf
   var exampleFont = '0100040100010101134142434445462b' +
@@ -34,14 +24,11 @@ describe('font', function() {
     fontData.push(parseInt(hex, 16));
   }
   var bytes = new Uint8Array(fontData);
-  fontData = {getBytes: function() { return bytes; }};
-
-  function bytesToString(bytesArray) {
-    var str = '';
-    for (var i = 0, ii = bytesArray.length; i < ii; i++)
-      str += String.fromCharCode(bytesArray[i]);
-    return str;
-  }
+  fontData = {
+    getBytes: function() {
+      return bytes;
+    }
+  };
 
   describe('CFFParser', function() {
     var parser = new CFFParser(fontData, {});
@@ -70,8 +57,9 @@ describe('font', function() {
 
       index = new CFFIndex();
       var longName = [];
-      for (var i = 0; i < 129; i++)
+      for (var i = 0; i < 129; i++) {
         longName.push(0);
+      }
       index.add(longName);
       names = parser.parseNameIndex(index);
       expect(names[0].length).toEqual(127);
@@ -189,7 +177,7 @@ describe('font', function() {
       expect(charset.charset[1]).toEqual('exclam');
 
       // CID font
-      var charset = parser.parseCharsets(3, 2, new CFFStrings(), true);
+      charset = parser.parseCharsets(3, 2, new CFFStrings(), true);
       expect(charset.charset[1]).toEqual(2);
     });
 
@@ -205,7 +193,7 @@ describe('font', function() {
       expect(charset.charset).toEqual(['.notdef', 'quoteright', 'parenleft']);
 
       // CID font
-      var charset = parser.parseCharsets(3, 2, new CFFStrings(), true);
+      charset = parser.parseCharsets(3, 2, new CFFStrings(), true);
       expect(charset.charset).toEqual(['.notdef', 8, 9]);
     });
 
@@ -222,7 +210,7 @@ describe('font', function() {
       expect(charset.charset).toEqual(['.notdef', 'quoteright', 'parenleft']);
 
       // CID font
-      var charset = parser.parseCharsets(3, 2, new CFFStrings(), true);
+      charset = parser.parseCharsets(3, 2, new CFFStrings(), true);
       expect(charset.charset).toEqual(['.notdef', 8, 9]);
     });
 
@@ -342,7 +330,7 @@ describe('font', function() {
       var parser = new Type1Parser(stream);
       expect(parser.readNumberArray()).toEqual([1, 2]);
       // Variation on spacing.
-      var stream = new StringStream('[ 1 2 ]');
+      stream = new StringStream('[ 1 2 ]');
       parser = new Type1Parser(stream);
       expect(parser.readNumberArray()).toEqual([1, 2]);
     });
@@ -374,7 +362,7 @@ describe('font', function() {
         '/FontMatrix [0.001 0 0 0.001 0 0 ]readonly def\n');
       var parser = new Type1Parser(stream);
       var props = {};
-      var program = parser.extractFontHeader(props);
+      parser.extractFontHeader(props);
       expect(props.fontMatrix).toEqual([0.001, 0, 0, 0.001, 0, 0]);
     });
     it('parses font header encoding', function() {
@@ -385,8 +373,8 @@ describe('font', function() {
         'readonly def\n');
       var parser = new Type1Parser(stream);
       var props = { overridableEncoding: true };
-      var program = parser.extractFontHeader(props);
-      expect(props.baseEncoding[33]).toEqual('arrowright');
+      parser.extractFontHeader(props);
+      expect(props.builtInEncoding[33]).toEqual('arrowright');
     });
   });
 });
